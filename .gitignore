@@ -1,0 +1,11 @@
+
+
+# ignore file
+model-*
+checkpoint*
+*.jpg
+*.jpeg
+*.JPEG
+*.JPG
+*.local
+*.pb
