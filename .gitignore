@@ -10,3 +10,4 @@ checkpoint*
 *.local
 *.pb
 *.h5
+*.lan
