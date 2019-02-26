@@ -39,6 +39,12 @@ img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 img = np.asarray(img, np.float32)
 img = img[np.newaxis, :] / 255.
 
+'''
+预测就比较简单：
+    1、得到位置框信息，置信度，分类类别
+    2、置信度*分类类别 = 得分
+    3、将位置框 和 得分信息输入NMS，得到最后结果。
+'''
 with tf.Session() as sess:
     input_data = tf.placeholder(tf.float32, [1, args.new_size[1], args.new_size[0], 3], name='input_data')
     yolo_model = yolov3(args.num_class, args.anchors)

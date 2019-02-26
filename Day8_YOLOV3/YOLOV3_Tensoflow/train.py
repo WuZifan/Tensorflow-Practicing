@@ -155,9 +155,21 @@ shuffle_and_overwrite(args.train_file)
 '''
 # 拿到一个这样的对象
 train_dataset = tf.data.TextLineDataset(args.train_file)
+
 '''
+    tf.contrib.data.map_and_batch(map_func,batch_size,num_parallel_calls):
+            调用者：一个Dataset类型对象
+            参数：
+                map_func：对dataset里面每一个对象使用的函数
+                batch_size:每次对多少个对象使用这个函数
+                num_...:并行线程数目        
     tf.py_func：将一个输入输出的np.array类型的py方法，
                 封装成一个tensorflow的op
+    parse_data：一个获取数据的方法，返回是：
+                img:[416,416,3] # 只有一张图片
+                y_true_13:[13,13,3,5+clas_num];一张图片中
+                y_true_26:[26,26,3,5+clas_num];一张图片中
+                y_true_52:[52,52,3,5+clas_num];一张图片中
 '''
 train_dataset = train_dataset.apply(tf.contrib.data.map_and_batch(
     lambda x: tf.py_func(parse_data, [x,
@@ -167,6 +179,7 @@ train_dataset = train_dataset.apply(tf.contrib.data.map_and_batch(
                                       'train'],
                          [tf.float32, tf.float32, tf.float32, tf.float32]),
     num_parallel_calls=args.num_threads, batch_size=args.batch_size))
+# 预获取？
 train_dataset = train_dataset.prefetch(args.prefetech_buffer)
 
 val_dataset = tf.data.TextLineDataset(args.val_file)

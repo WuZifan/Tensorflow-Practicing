@@ -89,29 +89,55 @@ class yolov3(object):
 
     def reorg_layer(self, feature_map, anchors):
         '''
+        将预测bbox的坐标信息映射回原图尺寸，
+        并把不同预测内容的维度分开
         feature_map: a feature_map from [feature_map_1, feature_map_2, feature_map_3] returned
             from `forward` function
+            [ [None,13,13,255],[None,26,26,255],[None,52,52,255]]中的一个
         anchors: shape: [3, 2]
+        '''
+        '''
+            1、拿到现在feature_map的尺寸
+            2、拿到缩放倍数。
         '''
         # NOTE: size in [h, w] format! don't get messed up!
         grid_size = feature_map.shape.as_list()[1:3]  # [13, 13]
         # the downscale ratio in height and weight
         ratio = tf.cast(self.img_size / grid_size, tf.float32)
+
+        '''
+            注意：
+                1、所有的anchors的宽高都是在原始图像上。
+                2、现在需要把anchors的尺寸映射到现在这个尺寸的feature-map上。
+        '''
         # rescale the anchors to the feature_map
         # NOTE: the anchor is in [w, h] format!
         rescaled_anchors = [(anchor[0] / ratio[1], anchor[1] / ratio[0]) for anchor in anchors]
 
+        '''
+            把最后一个维度展开，从255变成[3,85]
+        '''
         feature_map = tf.reshape(feature_map, [-1, grid_size[0], grid_size[1], 3, 5 + self.class_num])
 
-        # split the feature_map along the last dimension
-        # shape info: take 416x416 input image and the 13*13 feature_map for example:
-        # box_centers: [N, 13, 13, 3, 2] last_dimension: [center_x, center_y]
-        # box_sizes: [N, 13, 13, 3, 2] last_dimension: [width, height]
-        # conf_logits: [N, 13, 13, 3, 1]
-        # prob_logits: [N, 13, 13, 3, class_num]
+        '''
+        将最后一维分一下
+         split the feature_map along the last dimension
+         shape info: take 416x416 input image and the 13*13 feature_map for example:
+         box_centers: [N, 13, 13, 3, 2] last_dimension: [center_x, center_y]
+         box_sizes: [N, 13, 13, 3, 2] last_dimension: [width, height]
+         conf_logits: [N, 13, 13, 3, 1]
+         prob_logits: [N, 13, 13, 3, class_num]
+        '''
         box_centers, box_sizes, conf_logits, prob_logits = tf.split(feature_map, [2, 2, 1, self.class_num], axis=-1)
+
+        '''
+            中心位置过一下sigmoid，变成0~1值，表示相对cell左上角的偏移
+        '''
         box_centers = tf.nn.sigmoid(box_centers)
 
+        '''
+            拿到13*13的feature_map上，每个cell左上角的坐标吧
+        '''
         # use some broadcast tricks to get the mesh coordinates
         grid_x = tf.range(grid_size[1], dtype=tf.int32)
         grid_y = tf.range(grid_size[0], dtype=tf.int32)
@@ -122,11 +148,19 @@ class yolov3(object):
         # shape: [13, 13, 1, 2]
         x_y_offset = tf.cast(tf.reshape(x_y_offset, [grid_size[0], grid_size[1], 1, 2]), tf.float32)
 
+        '''
+        拿到相对整个feature_map左上角的距离
+        并且映射回原图上的位置
+        '''
         # get the absolute box coordinates on the feature_map 
         box_centers = box_centers + x_y_offset
         # rescale to the original image scale
         box_centers = box_centers * ratio[::-1]
 
+        '''
+            尺寸就直接映射回原位置就好
+            别忘了宽高的计算公式：anchor*exp(predict_w) = bbox_real_coor
+        '''
         # avoid getting possible nan value with tf.clip_by_value
         box_sizes = tf.clip_by_value(tf.exp(box_sizes), 1e-9, 50) * rescaled_anchors
         # rescale to the original image scale
@@ -136,6 +170,14 @@ class yolov3(object):
         # last dimension: (center_x, center_y, w, h)
         boxes = tf.concat([box_centers, box_sizes], axis=-1)
 
+        '''
+            返回处理过的信息：
+                x_y_offset：feature_map上每个cell的左上角坐标 shape: [13, 13, 1, 2]
+                boxes：bbox在原图上的位置 [N, 13, 13, 3, 4]
+                conf_logits：bbox的置信度 [N, 13, 13, 3, 1]
+                prob_logits：bbox的分类信息 [N, 13, 13, 3, class_num]
+                
+        '''
         # shape:
         # x_y_offset: [13, 13, 1, 2]
         # boxes: [N, 13, 13, 3, 4], rescaled to the original image scale
@@ -149,8 +191,15 @@ class yolov3(object):
         Receive the returned feature_maps from `forward` function,
         the produce the output predictions at the test stage.
         '''
+        '''
+            拿到不同尺寸的预测结果
+        '''
         feature_map_1, feature_map_2, feature_map_3 = feature_maps
 
+        '''
+            1、将不同尺寸的预测结果和对应的anchors对应起来
+            2、将结果整理，分割。
+        '''
         feature_map_anchors = [(feature_map_1, self.anchors[6:9]),
                                (feature_map_2, self.anchors[3:6]),
                                (feature_map_3, self.anchors[0:3])]
@@ -168,6 +217,9 @@ class yolov3(object):
             # prob_logits: [N, 13*13*3, class_num]
             return boxes, conf_logits, prob_logits
 
+        '''
+        对不同尺寸的结果reshape一下
+        '''
         boxes_list, confs_list, probs_list = [], [], []
         for result in reorg_results:
             boxes, conf_logits, prob_logits = _reshape(result)
@@ -199,8 +251,25 @@ class yolov3(object):
     def loss_layer(self, feature_map_i, y_true, anchors):
         '''
         calc loss function from a certain scale
-        '''
         
+        feature_map_i和y_true是 [ [None,13,13,255],[None,26,26,255],[None,52,52,255]]
+        中的一个
+        anchors和上面对应的self.anchors = [[10, 13], [16, 30], [33, 23],
+                         # [30, 61], [62, 45], [59,  119],
+                         # [116, 90], [156, 198], [373,326]]
+        中的一组
+        
+        :param feature_map_i: 13*13*255
+        :param y_true:  13*13*255
+        :param anchors: 
+        :return: 
+        '''
+
+        '''
+            1、拿到现在feature_map的尺寸
+            2、拿到缩放倍数。
+            3、拿到Batch-size
+        '''
         # size in [h, w] format! don't get messed up!
         grid_size = tf.shape(feature_map_i)[1:3]
         # the downscale ratio in height and weight
@@ -208,8 +277,21 @@ class yolov3(object):
         # N: batch_size
         N = tf.cast(tf.shape(feature_map_i)[0], tf.float32)
 
+        '''
+        对predict的数据做一个处理，将预测数据全部转回原图上
+            x_y_offset：feature_map上每个cell的左上角坐标 []
+            pred_boxes：bbox在原图上的位置
+            pred_conf_logits：bbox的置信度
+            pred_prob_logits：bbox的分类信息
+            
+        '''
         x_y_offset, pred_boxes, pred_conf_logits, pred_prob_logits = self.reorg_layer(feature_map_i, anchors)
 
+
+        '''
+            对于label而言，用置信度来过滤一下
+            剩下那些被标记为用来预测的gt的anchors，作为label。
+        '''
         ###########
         # get mask
         ###########
@@ -220,6 +302,13 @@ class yolov3(object):
         # V: num of true gt box
         valid_true_boxes = tf.boolean_mask(y_true[..., 0:4], tf.cast(object_mask[..., 0], 'bool'))
 
+        '''
+            计算预测框和gt框在原图上IOU：
+                1、对于每一个预测框
+                2、来计算它和每一个gt框之间的IOU。
+                3、gt框有V个，预测框有13,13,3个
+                4、所有最后尺寸为[None,13,13,3,V]
+        '''
         # shape: [V, 2]
         valid_true_box_xy = valid_true_boxes[:, 0:2]
         valid_true_box_wh = valid_true_boxes[:, 2:4]
@@ -231,18 +320,30 @@ class yolov3(object):
         # shape: [N, 13, 13, 3, V]
         iou = self.broadcast_iou(valid_true_box_xy, valid_true_box_wh, pred_box_xy, pred_box_wh)
 
+        '''
+            对每一个预测框，找到它和那个gt框的IOU最大。
+        '''
         # shape: [N, 13, 13, 3]
         best_iou = tf.reduce_max(iou, axis=-1)
 
+        '''
+            对于那些最大IOU都小于0.5的位置上的预测框，我们不要
+        '''
         # get_ignore_mask
         ignore_mask = tf.cast(best_iou < 0.5, tf.float32)
         # shape: [N, 13, 13, 3, 1]
         ignore_mask = tf.expand_dims(ignore_mask, -1)
 
+        '''
+            再次将尺寸放缩回现在特征图上的尺寸，并归一到一个cell内（0~1）
+            
+            那个除法好骚气啊…[N, 13, 13, 3, 2] 的tensor和[3,2]的相除
+        '''
         # get xy coordinates in one cell from the feature_map
         # numerical range: 0 ~ 1
         # shape: [N, 13, 13, 3, 2]
         true_xy = y_true[..., 0:2] / ratio[::-1] - x_y_offset
+        # 这不就是sigmoid(featuremap_i[...,0:2]
         pred_xy = pred_box_xy / ratio[::-1] - x_y_offset
 
         # get_tw_th
@@ -250,6 +351,10 @@ class yolov3(object):
         # shape: [N, 13, 13, 3, 2]
         true_tw_th = y_true[..., 2:4] / anchors
         pred_tw_th = pred_box_wh / anchors
+
+        '''
+            根据condition的情况，来选择x和y是返回哪个
+        '''
         # for numerical stability
         true_tw_th = tf.where(condition=tf.equal(true_tw_th, 0),
                               x=tf.ones_like(true_tw_th), y=true_tw_th)
@@ -258,11 +363,17 @@ class yolov3(object):
         true_tw_th = tf.log(tf.clip_by_value(true_tw_th, 1e-9, 1e9))
         pred_tw_th = tf.log(tf.clip_by_value(pred_tw_th, 1e-9, 1e9))
 
+        '''
+            小的gt会有更大的惩罚
+        '''
         # box size punishment: 
         # box with smaller area has bigger weight. This is taken from the yolo darknet C source code.
         # shape: [N, 13, 13, 3, 1]
         box_loss_scale = 2. - (y_true[..., 2:3] / tf.cast(self.img_size[1], tf.float32)) * (y_true[..., 3:4] / tf.cast(self.img_size[0], tf.float32))
 
+        '''
+            仅有那些被标记为用来识别物体的cell的上面，才来进行位置的回归
+        '''
         ############
         # loss_part
         ############
@@ -270,6 +381,12 @@ class yolov3(object):
         xy_loss = tf.reduce_sum(tf.square(true_xy - pred_xy) * object_mask * box_loss_scale) / N
         wh_loss = tf.reduce_sum(tf.square(true_tw_th - pred_tw_th) * object_mask * box_loss_scale) / N
 
+        '''
+            置信度loss：
+                仅计算不用来识别物体的cell，且IOU小于0.5的情况下的框。
+            这里利用(1-object_mask)*ignore_mask来计算，而不是仅用ignore_mask，是为了避免，
+            那些应该用来识别的预测框（即在object_mask内的），由于其best_iou小于阈值，就不被惩罚（从而没有优化）
+        '''
         # shape: [N, 13, 13, 3, 1]
         conf_pos_mask = object_mask
         conf_neg_mask = (1 - object_mask) * ignore_mask
@@ -277,6 +394,9 @@ class yolov3(object):
         conf_loss_neg = conf_neg_mask * tf.nn.sigmoid_cross_entropy_with_logits(labels=object_mask, logits=pred_conf_logits)
         conf_loss = tf.reduce_sum(conf_loss_pos + conf_loss_neg) / N
 
+        '''
+            分类loss
+        '''
         # shape: [N, 13, 13, 3, 1]
         class_loss = object_mask * tf.nn.sigmoid_cross_entropy_with_logits(labels=y_true[..., 5:], logits=pred_prob_logits)
         class_loss = tf.reduce_sum(class_loss) / N
@@ -288,13 +408,21 @@ class yolov3(object):
         '''
         param:
             y_pred: returned feature_map list by `forward` function: [feature_map_1, feature_map_2, feature_map_3]
-            y_true: input y_true by the tf.data pipeline
+            y_true: input y_true by the tf.data pipeline [y_true_13, y_true_26, y_true_52]
         '''
         loss_xy, loss_wh, loss_conf, loss_class = 0., 0., 0., 0.
+
+        # self.anchors = [[10, 13], [16, 30], [33, 23],
+                         # [30, 61], [62, 45], [59,  119],
+                         # [116, 90], [156, 198], [373,326]]
+
         anchor_group = [self.anchors[6:9],
                         self.anchors[3:6],
                         self.anchors[0:3]]
 
+        '''
+            在不同尺度上进行计算
+        '''
         # calc loss in 3 scales
         for i in range(len(y_pred)):
             '''
@@ -302,7 +430,10 @@ class yolov3(object):
                 13*13*255
                 26*26*255
                 52*52*255
-                y_true的尺寸？
+                y_true的尺寸一样的:
+                13*13*255
+                26*26*255
+                52*52*255
 
             '''
             result = self.loss_layer(y_pred[i], y_true[i], anchor_group[i])

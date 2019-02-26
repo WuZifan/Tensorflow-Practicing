@@ -167,6 +167,13 @@ if __name__ == '__main__':
 
         我们输入的格式是：image_absolute_path box_1 box_2 ... box_n. Box_format: label_index x_min y_min x_max y_max：
         例子：xxx/xxx/1.jpg 0 453 369 473 391 1 588 245 608 268
+        
+        基本而言它是这么一个流程：
+            1、本质上是一个kmeans，那么问题就是如何准备数据，以及计算数据之间的size。
+            2、数据准备上，每一个anchors都是用他们的宽和高作为他们特征。
+            3、数据计算上，比较有意思的点，是通过计算两者的最大重合面积，算出anchors的之间的IOU
+            4、从而来计算anchors的距离。
+            5、具体而言 dis(a1,a2) = 1-IOU(a1,a2)
 
     '''
     annotation_path = "./data/my_data/train.txt"

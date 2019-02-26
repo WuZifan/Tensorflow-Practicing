@@ -68,20 +68,34 @@ def data_augmentation(img, boxes, label):
 
 def process_box(boxes, labels, img_size, class_num, anchors):
     '''
+    该方法需要需要确定以下几个信息：
+        1、对于这个gt，它应该被哪个anchors预测。
+        2、由于anchors和尺度的绑定已经完成，完成了1，就完成了：
+            2.1 gt应该在哪个尺度下被预测。
+            2.2 gt在这个尺度下被哪个anchors预测
+        3、最后，完成：
+            3.1 gt被这个尺度下的哪个位置上的anchors预测
     :param boxes: [None,4]
     :param labels: [None,]
     :param img_size: 416,416
-    :param class_num: [[10, 13], [16, 30], [33, 23],
+    :param class_num: 80
+    :param anchors:[[10, 13], [16, 30], [33, 23],
                          [30, 61], [62, 45], [59,  119],
                          [116, 90], [156, 198], [373,326]]
-    :param anchors:
     :return:
     '''
     '''
     Generate the y_true label, i.e. the ground truth feature_maps in 3 different scales.
     '''
+
+    '''
+        将anchors分为3个尺度，这里是从大到小
+    '''
     anchors_mask = [[6,7,8], [3,4,5], [0,1,2]]
 
+    '''
+        拿到每个GT的中心和尺寸
+    '''
     # convert boxes form:
     # shape: [N, 2]
     # (x_center, y_center)
@@ -89,6 +103,9 @@ def process_box(boxes, labels, img_size, class_num, anchors):
     # (width, height)
     box_sizes = boxes[:, 2:4] - boxes[:, 0:2]
 
+    '''
+        用来保存的地方
+    '''
     # [13, 13, 3, 5+num_class]
     y_true_13 = np.zeros((img_size[1] // 32,
                           img_size[0] // 32,
@@ -131,10 +148,14 @@ def process_box(boxes, labels, img_size, class_num, anchors):
     # [N]
     best_match_idx = np.argmax(iou, axis=1)
 
+    '''
+        缩放的比例尺
+    '''
     ratio_dict = {1.: 8., 2.: 16., 3.: 32.}
     for i, idx in enumerate(best_match_idx):
         '''
-            找到了自己属于你哪个anchors的group，已经自己应该被哪个尺度进行预测
+            找到了自己属于你哪个anchors的group，
+            以及自己应该被哪个尺度进行预测
         '''
         # idx: 0,1,2 ==> 2; 3,4,5 ==> 1; 6,7,8 ==> 2
         feature_map_group = 2 - idx // 3
@@ -204,6 +225,8 @@ def parse_data(line, class_num, img_size, anchors, mode):
         anchors = [[10, 13], [16, 30], [33, 23],
                          [30, 61], [62, 45], [59,  119],
                          [116, 90], [156, 198], [373,326]]
+                         
+        
 
     '''
     y_true_13, y_true_26, y_true_52 = process_box(boxes, labels, img_size,
