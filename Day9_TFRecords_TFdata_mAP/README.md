@@ -1,4 +1,6 @@
-这个是用来练习TF_Record和TF_Data api的。
+这个是用来练习TF_Record和TF_Data api的，顺便学习了mAP.
+
+map：https://github.com/Cartucho/mAP
 
 代码参考：https://www.jianshu.com/p/eec32f6c5503
 TF读取数据原理参考：https://zhuanlan.zhihu.com/p/27238630
